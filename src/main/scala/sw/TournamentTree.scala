@@ -1,84 +1,62 @@
 package sw
 
-import sw.TournamentTree.DefinedPlayer.{PrefilledPlayer, Win}
-import sw.TournamentTree.{DefinedPlayer, Remaining}
-
-object TournamentTree {
-
-  def applyAny[T](players: T*): TournamentTree[T] = {
-    players match {
-      case Seq(one) => PrefilledPlayer(one)
-      case other =>
-        val totalSize = other.size
-        val splitAt = java.lang.Integer.highestOneBit(totalSize) match {
-          case `totalSize` => totalSize / 2
-          case otherSize => otherSize
-        }
-        other.splitAt(splitAt) match {
-          case (left, right) => Remaining(applyAny(left: _*), applyAny(right: _*))
-        }
-    }
-  }
-
-  def applyPowerOfTwo[T](players: T*): TournamentTree[T] = {
-    if (players.length == 1) PrefilledPlayer(players(0))
-    else {
-      require(players.length % 2 == 0)
-      players.splitAt(players.length / 2) match {
-        case (left, right) =>
-          Remaining(applyPowerOfTwo(left: _*), applyPowerOfTwo(right: _*))
-      }
-    }
-  }
-
-  sealed trait DefinedPlayer[T] extends TournamentTree[T] {
-    def player: T
-  }
-
-  object DefinedPlayer {
-    def unapply[T](input: DefinedPlayer[T]): Option[T] = PartialFunction.condOpt(input) {
-      case PrefilledPlayer(player) => player
-      case Win(player, _) => player
-    }
-
-    case class PrefilledPlayer[T](player: T) extends DefinedPlayer[T]
-
-    case class Win[T](player: T, from: Remaining[T]) extends DefinedPlayer[T] {
-      def left = from.left
-
-      def right = from.right
-    }
-
-  }
-
-  case class Remaining[T](left: TournamentTree[T], right: TournamentTree[T]) extends TournamentTree[T]
-
-}
+import scala.annotation.tailrec
 
 sealed trait TournamentTree[T] {
 
-  def win(player: T): TournamentTree[T] = this match {
-    case r@Remaining(DefinedPlayer(`player`), DefinedPlayer(_)) => Win(player, r)
-    case r@Remaining(DefinedPlayer(_), DefinedPlayer(`player`)) => Win(player, r)
-    case r@Remaining(left, right) => Remaining(left.win(player), right.win(player))
-    case _ => this
-  }
+  def win(player: T): TournamentTree[T]
 
-  def nextGames: List[Remaining[T]] = this match {
-    case r@Remaining(DefinedPlayer(_), DefinedPlayer(_)) => List(r)
-    case r@Remaining(a, b) => a.nextGames ++ b.nextGames
-    case Win(_, _) => List.empty
-    case PrefilledPlayer(_) => List.empty
-  }
+  def nextGames: Set[(T, T)]
+
+  def winner: Option[T]
 
 }
 
-object DemoTournamentApp extends App {
+object TournamentTree {
 
-  //  val tourney = TourneyBranch.applyPowerOfTwo("drakas", "lucas", "sanzo", "million")
-  //  val tourney = TourneyBranch.applyAny("drakas", "lucas", "sanzo", "million")
-  val tourney = TournamentTree.applyAny("drakas", "lucas", "sanzo")
-  val result = tourney.win("drakas").win("sanzo").win("sanzo")
-  println(result)
-  println(result.nextGames)
+  def apply[T](players: T*): TournamentTree[T] = {
+    buildTree(players.map(DefinedPlayer.apply): _*)
+  }
+
+  case class DefinedPlayer[T](player: T) extends TournamentTree[T] {
+    def win(player: T): TournamentTree[T] = this
+
+    def nextGames: Set[(T, T)] = Set.empty
+
+    def winner: Option[T] = Some(player)
+  }
+
+  case class UndefinedPlayer[T](left: TournamentTree[T], right: TournamentTree[T]) extends TournamentTree[T] {
+    def win(player: T): TournamentTree[T] = (left, right) match {
+      case (DefinedPlayer(`player`), DefinedPlayer(_)) => DefinedPlayer(player)
+      case (DefinedPlayer(_), DefinedPlayer(`player`)) => DefinedPlayer(player)
+      case _ => UndefinedPlayer(left.win(player), right.win(player))
+    }
+
+    def nextGames: Set[(T, T)] = (left, right) match {
+      case (DefinedPlayer(a), DefinedPlayer(b)) => Set(a -> b)
+      case _ => left.nextGames ++ right.nextGames
+    }
+
+    def winner: Option[T] = None
+  }
+
+  /** Bottom up build: take every 2 consecutive items, create an UndefinedPlayer,
+    * then reprocess the new list of trees until we're left with only 1.
+    */
+  @tailrec
+  private def buildTree[T](tournamentTree: TournamentTree[T]*): TournamentTree[T] = {
+    tournamentTree.toList match {
+      case tree :: Nil => tree
+      case other =>
+        buildTree {
+          other.grouped(2).map(_.toList).map {
+            case a :: b :: Nil => UndefinedPlayer(a, b)
+            case a :: _ => a
+            case Nil => ???
+          }.toList: _*
+        }
+    }
+  }
+
 }
